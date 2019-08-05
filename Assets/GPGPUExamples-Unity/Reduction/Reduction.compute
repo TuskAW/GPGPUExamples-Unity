@@ -1,0 +1,45 @@
+﻿#pragma kernel CsSetData
+#pragma kernel CsReduction
+
+#define THREADS_PER_GROUP 512
+
+RWStructuredBuffer<float> _DataArray;
+RWStructuredBuffer<float> _PartialSums;
+
+groupshared float groupsum[THREADS_PER_GROUP];
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsSetData(uint id : SV_DispatchThreadID)
+{
+    // Data length
+    _DataArray[id] = 1.0;
+
+    // Leibniz formula for π
+    // uint k = id;
+    // float sign = (k % 2 == 0) ? 1.0 : -1.0;
+    // _DataArray[k] = sign/(2.0*k + 1.0);
+}
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsReduction(uint id : SV_DispatchThreadID, uint gtid : SV_GroupThreadID, uint gid : SV_GroupID)
+{
+    // Each thread loads one element from global to shared mem
+    groupsum[gtid] = _DataArray[id];
+    GroupMemoryBarrierWithGroupSync();
+
+    // Do reduction in shared mem
+    for(unsigned int s=THREADS_PER_GROUP/2; s>0; s>>=1)
+    {
+        if (gtid < s)
+        {
+            groupsum[gtid] += groupsum[gtid + s];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    // Write result for this block to global mem
+    if (gtid == 0)
+    {
+        _PartialSums[gid] = groupsum[0];
+    }
+}

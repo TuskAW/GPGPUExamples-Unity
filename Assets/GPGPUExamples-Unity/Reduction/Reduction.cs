@@ -26,8 +26,8 @@ namespace GPGPUExamples
         float[] _dataArray;    
         float[] _partialSums;
         ComputeBuffer _dataBuffer;
-        ComputeBuffer _partialSumsBuffer;
-        ComputeBuffer _partialSumsRead;
+        ComputeBuffer _partialSumBuffer;
+        ComputeBuffer _partialSumBufferRead;
 
         void Start()
         {
@@ -91,7 +91,8 @@ namespace GPGPUExamples
             _numOfGroups = Mathf.CeilToInt((float)_size / _numOfGpuThreads);
 
             _dataBuffer = new ComputeBuffer(_size, sizeof(float));
-            _partialSumsBuffer = new ComputeBuffer(_numOfGroups, sizeof(float));
+            _partialSumBuffer = new ComputeBuffer(_numOfGroups, sizeof(float));
+            _partialSumBufferRead = new ComputeBuffer(_numOfGroups, sizeof(float));
 
             _partialSums = new float[_numOfGroups];
         }
@@ -109,17 +110,53 @@ namespace GPGPUExamples
         {
             int kernelID = _computeShader.FindKernel(kernelNames[1]);
             _computeShader.SetBuffer(kernelID, "_DataArray", _dataBuffer);
-            _computeShader.SetBuffer(kernelID, "_PartialSums", _partialSumsBuffer);
+            _computeShader.SetBuffer(kernelID, "_PartialSumWrite", _partialSumBuffer);
 
             // The total number of execution threads is numOfGroups*numOfGpuThreads
             _computeShader.Dispatch(kernelID, _numOfGroups, 1, 1);
-            _partialSumsBuffer.GetData(_partialSums);
+            _partialSumBuffer.GetData(_partialSums);
 
             float sum = 0.0f;
             for (int k = 0; k < _numOfGroups; k++)
             {
                 sum += _partialSums[k];
             }
+    
+            return sum;
+        }
+
+        float ReduceGPUV2()
+        {
+            // Debug.Log("Num of groups: " + _numOfGroups);
+
+            int kernelID = _computeShader.FindKernel(kernelNames[1]);
+            int nk = Mathf.CeilToInt((float)_size / _numOfGpuThreads);
+
+            // Debug.Log("nk: " + nk);
+            _computeShader.SetBuffer(kernelID, "_DataArray", _dataBuffer);
+            _computeShader.SetBuffer(kernelID, "_PartialSumWrite", _partialSumBuffer);
+            _computeShader.Dispatch(kernelID, nk, 1, 1);
+
+            while(nk > 1)
+            {
+                kernelID = _computeShader.FindKernel("CsCopyBuffer");
+                _computeShader.SetInt("_PartialSumSize", nk);
+                _computeShader.SetBuffer(kernelID, "_PartialSumRead", _partialSumBuffer);
+                _computeShader.SetBuffer(kernelID, "_PartialSumWrite", _partialSumBufferRead);
+                _computeShader.Dispatch(kernelID, nk, 1, 1);
+
+                nk = Mathf.CeilToInt((float)nk / _numOfGpuThreads);
+                // Debug.Log("nk: " + nk);
+
+                kernelID = _computeShader.FindKernel(kernelNames[1]);
+                _computeShader.SetBuffer(kernelID, "_DataArray", _partialSumBufferRead);
+                _computeShader.SetBuffer(kernelID, "_PartialSumWrite", _partialSumBuffer);
+                _computeShader.Dispatch(kernelID, nk, 1, 1);
+           }
+
+            _partialSumBuffer.GetData(_partialSums);
+
+            float sum = _partialSums[0];
     
             return sum;
         }

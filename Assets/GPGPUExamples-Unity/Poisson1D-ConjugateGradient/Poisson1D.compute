@@ -1,0 +1,85 @@
+﻿#pragma kernel CsSetInitialData
+#pragma kernel CsCopyVector
+#pragma kernel CsLpMV1
+#pragma kernel CsSzaxpy
+#pragma kernel CsDotProduct
+
+#define THREADS_PER_GROUP 512
+
+RWStructuredBuffer<float> _b;
+RWStructuredBuffer<float> _vk;
+RWStructuredBuffer<float> _Lv;
+
+RWStructuredBuffer<float> _x;
+RWStructuredBuffer<float> _y;
+RWStructuredBuffer<float> _z;
+
+RWStructuredBuffer<float> _VectorA;
+RWStructuredBuffer<float> _VectorB;
+RWStructuredBuffer<float> _PartialDot;
+groupshared float groupsum[THREADS_PER_GROUP];
+
+cbuffer params
+{
+    int _N;
+    float _alpha;
+};
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsSetInitialData(uint i : SV_DispatchThreadID)
+{
+    _b[i] = 1.0; // Source term
+    _vk[i] = 1.0; // Initial guess
+}
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsCopyVector(uint i : SV_DispatchThreadID)
+{
+    _y[i] = _x[i];
+}
+
+//============================================
+// Laplacian matrix and vector multiplication
+//============================================
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsLpMV1(uint i : SV_DispatchThreadID)
+{
+    bool isBoundary = (i <= 0) || (i >= _N-1);
+    if (!isBoundary)
+    {
+        _Lv[i] = _vk[i-1] - 2.0*_vk[i] + _vk[i+1]; // Finite Difference for 1D
+    }
+}
+
+//============================================
+// z = a*x + y
+//============================================
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsSzaxpy(uint i : SV_DispatchThreadID)
+{
+    _z[i] = _alpha * _x[i] + _y[i];
+}
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsDotProduct(uint id : SV_DispatchThreadID, uint gtid : SV_GroupThreadID, uint gid : SV_GroupID)
+{
+    // Each thread loads one element from global to shared mem
+    groupsum[gtid] = _VectorA[id]*_VectorB[id];
+    GroupMemoryBarrierWithGroupSync();
+
+    // Do reduction in shared mem
+    for(unsigned int s=THREADS_PER_GROUP/2; s>0; s>>=1)
+    {
+        if (gtid < s)
+        {
+            groupsum[gtid] += groupsum[gtid + s];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    // Write result for this block to global mem
+    if (gtid == 0)
+    {
+        _PartialDot[gid] = groupsum[0];
+    }
+}

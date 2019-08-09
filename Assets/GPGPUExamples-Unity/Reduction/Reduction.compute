@@ -1,12 +1,19 @@
 ﻿#pragma kernel CsSetData
 #pragma kernel CsReduction
+#pragma kernel CsCopyBuffer
 
 #define THREADS_PER_GROUP 512
 
 RWStructuredBuffer<float> _DataArray;
-RWStructuredBuffer<float> _PartialSums;
+RWStructuredBuffer<float> _PartialSumWrite;
+StructuredBuffer<float> _PartialSumRead;
 
 groupshared float groupsum[THREADS_PER_GROUP];
+
+cbuffer params
+{
+    int _PartialSumSize;
+};
 
 [numthreads(THREADS_PER_GROUP, 1, 1)]
 void CsSetData(uint id : SV_DispatchThreadID)
@@ -40,6 +47,19 @@ void CsReduction(uint id : SV_DispatchThreadID, uint gtid : SV_GroupThreadID, ui
     // Write result for this block to global mem
     if (gtid == 0)
     {
-        _PartialSums[gid] = groupsum[0];
+        _PartialSumWrite[gid] = groupsum[0];
+    }
+}
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsCopyBuffer(uint id : SV_DispatchThreadID, uint gtid : SV_GroupThreadID, uint gid : SV_GroupID)
+{
+    if (id < _PartialSumSize)
+    {
+        _PartialSumWrite[id] = _PartialSumRead[id];
+    }
+    else
+    {
+        _PartialSumWrite[id] = 0.0;
     }
 }

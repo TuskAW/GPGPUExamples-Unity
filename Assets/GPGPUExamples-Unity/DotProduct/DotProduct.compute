@@ -1,0 +1,48 @@
+﻿#pragma kernel CsSetData
+#pragma kernel CsDotProduct
+
+#define THREADS_PER_GROUP 512
+
+RWStructuredBuffer<float> _VectorA;
+RWStructuredBuffer<float> _VectorB;
+RWStructuredBuffer<float> _PartialDot;
+
+groupshared float groupsum[THREADS_PER_GROUP];
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsSetData(uint id : SV_DispatchThreadID)
+{
+    // Data length
+    // _VectorA[id] = 1.0;
+    // _VectorB[id] = 2.0;
+
+    // Basel problem
+    // The sum of the series is approximately equal to 1.644934 (pi^2/6)
+    uint k = id + 1;
+    _VectorA[id] = 1.0/k;
+    _VectorB[id] = 1.0/k;
+}
+
+[numthreads(THREADS_PER_GROUP, 1, 1)]
+void CsDotProduct(uint id : SV_DispatchThreadID, uint gtid : SV_GroupThreadID, uint gid : SV_GroupID)
+{
+    // Each thread loads one element from global to shared mem
+    groupsum[gtid] = _VectorA[id]*_VectorB[id];
+    GroupMemoryBarrierWithGroupSync();
+
+    // Do reduction in shared mem
+    for(unsigned int s=THREADS_PER_GROUP/2; s>0; s>>=1)
+    {
+        if (gtid < s)
+        {
+            groupsum[gtid] += groupsum[gtid + s];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    // Write result for this block to global mem
+    if (gtid == 0)
+    {
+        _PartialDot[gid] = groupsum[0];
+    }
+}

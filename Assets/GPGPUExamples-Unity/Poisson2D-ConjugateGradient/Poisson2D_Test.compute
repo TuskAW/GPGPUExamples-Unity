@@ -1,0 +1,60 @@
+﻿#pragma kernel CsSetInitialData
+
+#define THREADS_X 16
+#define THREADS_Y 16
+
+RWTexture2D<float> _v;
+RWTexture2D<float> _srcTerm;
+
+RWTexture2D<float> _VectorA;
+RWTexture2D<float> _VectorB;
+
+cbuffer params
+{
+    int _h;
+};
+
+float func(uint2 x, float _h, float _cx, float _cy)
+{
+
+}
+
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void CsSetAnaliticalSolution(uint2 i : SV_DispatchThreadID)
+{
+    float x = i.x;
+    float y = i.y;
+
+    _v[i] = func(i , _h, _cx, _cy);
+}
+
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void CsSetInitialData(uint2 i : SV_DispatchThreadID)
+{
+    _v[i] = 1.0; // Initial guess
+
+    // Source term
+    float q = 1.0e-8;
+    float eps0 = 8.9e-12;
+
+    float a = 0.05;
+    float x = id.x - 50.0;
+    float y = id.y - 50.0;
+
+    float dist = x*x + y*y;
+    if(dist < a*a)
+    {
+        _b[i] = -q/eps0 * _h*h;
+    }
+    else
+    {
+        _b[i] = 0.0;
+    }
+
+    // Test for dot product
+    // _VectorA[id] = 1.0;
+    // _VectorB[id] = 2.0;
+    // uint k = (id.x + _width*id.y) + 1;
+    // _VectorA[id] = 1.0/k;
+    // _VectorB[id] = 1.0/k;
+}

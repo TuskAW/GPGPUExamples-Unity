@@ -1,60 +1,73 @@
-﻿#pragma kernel CsSetInitialData
+﻿#pragma kernel CsSetSourceTermAndInitialGuess
+#pragma kernel CsSetTestForDotProduct
+#pragma kernel CsOutputRTValue
 
+#define PI 3.1415926535
 #define THREADS_X 16
 #define THREADS_Y 16
 
 RWTexture2D<float> _v;
-RWTexture2D<float> _srcTerm;
+RWTexture2D<float> _sourceTerm;
 
-RWTexture2D<float> _VectorA;
-RWTexture2D<float> _VectorB;
+RWTexture2D<float> _a;
+RWTexture2D<float> _b;
+RWTexture2D<float> _c;
+
+RWTexture2D<float> _TempInputTex;
+RWStructuredBuffer<float> _OutComputeBuffer;
 
 cbuffer params
 {
-    int _h;
+    int _width;
+    int _height;
 };
 
-float func(uint2 x, float _h, float _cx, float _cy)
+float sourceFunc(uint2 pixelPos)
 {
+    float ra = _width/10.0;
 
-}
-
-[numthreads(THREADS_X, THREADS_Y, 1)]
-void CsSetAnaliticalSolution(uint2 i : SV_DispatchThreadID)
-{
-    float x = i.x;
-    float y = i.y;
-
-    _v[i] = func(i , _h, _cx, _cy);
-}
-
-[numthreads(THREADS_X, THREADS_Y, 1)]
-void CsSetInitialData(uint2 i : SV_DispatchThreadID)
-{
-    _v[i] = 1.0; // Initial guess
-
-    // Source term
-    float q = 1.0e-8;
-    float eps0 = 8.9e-12;
-
-    float a = 0.05;
-    float x = id.x - 50.0;
-    float y = id.y - 50.0;
-
-    float dist = x*x + y*y;
-    if(dist < a*a)
+    float r = distance(float2(pixelPos.x, pixelPos.y), float2(_width/2.0, _height/2.0));
+    if (r < ra)
     {
-        _b[i] = -q/eps0 * _h*h;
+        return -4.0*PI;
     }
     else
     {
-        _b[i] = 0.0;
+        return 0.0;
+    }
+}
+
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void CsSetSourceTermAndInitialGuess(uint2 i : SV_DispatchThreadID)
+{
+    _v[i] = 0.0; // Initial guess
+    _sourceTerm[i] = sourceFunc(i); // Source term
+}
+
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void CsSetTestForDotProduct(uint2 i : SV_DispatchThreadID)
+{
+    // Test01
+    _a[i] = 1.0;
+    _b[i] = 2.0;
+
+    //**************************
+    // Test02 (Basel problem)
+    // The sum of the series is approximately equal to 1.644934 (pi^2/6)
+    //**************************
+    // uint k = (i.x + _width*i.y) + 1;
+    // _a[i] = 1.0/k;
+    // _b[i] = 1.0/k;
+}
+
+[numthreads(THREADS_X, THREADS_Y, 1)]
+void CsOutputRTValue(uint2 id : SV_DispatchThreadID)
+{
+    if (id.x < 0 || id.x >= _width || id.y < 0 || id.y >= _height)
+    {
+        return;
     }
 
-    // Test for dot product
-    // _VectorA[id] = 1.0;
-    // _VectorB[id] = 2.0;
-    // uint k = (id.x + _width*id.y) + 1;
-    // _VectorA[id] = 1.0/k;
-    // _VectorB[id] = 1.0/k;
+    float value = _TempInputTex[id];
+    _OutComputeBuffer[id.x + _width*id.y] = value;
 }

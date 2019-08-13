@@ -29,10 +29,13 @@ namespace GPGPUExamples
     public class Poisson2D_GPU : MonoBehaviour
     {
         [SerializeField] ComputeShader _computeShader;
+        [SerializeField] ComputeShader _computeShaderForTest;
+        [SerializeField] Material _debugTextureMaterial;
         [SerializeField] int _width = 100;
         [SerializeField] int _height = 100;
-        [SerializeField] float _dh = 0.01f;
-        [SerializeField] int _maxIter = 50;
+        [SerializeField] float _delta = 0.1f;
+        [SerializeField] int _maxIter = 500;
+        [SerializeField] float _eps = 1.0e-7f;
 
         Vector2Int _gpuThreads = new Vector2Int(16, 16);
 
@@ -45,10 +48,16 @@ namespace GPGPUExamples
 
         RenderTexture _b; // source term
         RenderTexture _vk; // the solution of the poisson equation
-        RenderTexture _rk;
-        RenderTexture _pk;
+        RenderTexture _vk1;
+        RenderTexture _rka;
+        RenderTexture _rkb;
+        RenderTexture _pka;
+        RenderTexture _pkb;
         RenderTexture _Lp;
         RenderTexture _Lv;
+
+        float[] _rtOutBufferArray;
+        ComputeBuffer _rtOutBuffer;
 
         void Start()
         {
@@ -64,6 +73,20 @@ namespace GPGPUExamples
             }
 
             InitializeForGPUMode();
+
+            System.Diagnostics.Stopwatch _stopWatch = new System.Diagnostics.Stopwatch();
+            _stopWatch.Start();
+
+            SetTestData();
+            SolvePoissonGPU(_width, _height, _delta);
+
+            _stopWatch.Stop();
+            Debug.Log("Elapsed time: " + _stopWatch.ElapsedMilliseconds + "ms");
+
+            OutputRTValue(_b);
+            DataExporter.Export("PoissonSource", _rtOutBufferArray, _width, _height);
+            OutputRTValue(_vk);
+            DataExporter.Export("PoissonResult", _rtOutBufferArray, _width, _height);
         }
 
         void Update()
@@ -79,14 +102,42 @@ namespace GPGPUExamples
                 return;
             }
 
-            System.Diagnostics.Stopwatch _stopWatch = new System.Diagnostics.Stopwatch();
-            _stopWatch.Start();
+            // System.Diagnostics.Stopwatch _stopWatch = new System.Diagnostics.Stopwatch();
+            // _stopWatch.Start();
 
-            SolvePoissonGPU(_width, _height, _dh);
-            Debug.Log("WxH: " + _width*_height);
+            // SetTestData();
+            // SolvePoissonGPU(_width, _height, _delta);
 
-            _stopWatch.Stop();
-            Debug.Log("Elapsed time: " + _stopWatch.ElapsedMilliseconds + "ms");
+            // _stopWatch.Stop();
+            // Debug.Log("Elapsed time: " + _stopWatch.ElapsedMilliseconds + "ms");
+        }
+
+        void SetTestData()
+        {
+            if (!_initialized)
+            {
+                InitializeForGPUMode();
+            }
+
+            int kernelID = _computeShaderForTest.FindKernel("CsSetSourceTermAndInitialGuess");
+            _computeShaderForTest.SetInt("_width", _width);
+            _computeShaderForTest.SetInt("_height", _height);
+            _computeShaderForTest.SetTexture(kernelID, "_v", _vk); // Initial guess
+            _computeShaderForTest.SetTexture(kernelID, "_sourceTerm", _b); // Source term
+            _computeShaderForTest.Dispatch(kernelID, Mathf.CeilToInt((float)_width / _gpuThreads.x), 
+                                                Mathf.CeilToInt((float)_height / _gpuThreads.y), 1);
+        }
+
+        void OutputRTValue(RenderTexture rt)
+        {
+            int kernelID = _computeShaderForTest.FindKernel("CsOutputRTValue");
+            _computeShaderForTest.SetInt("_width", _width);
+            _computeShaderForTest.SetInt("_height", _height);
+            _computeShaderForTest.SetTexture(kernelID, "_TempInputTex", rt);
+            _computeShaderForTest.SetBuffer(kernelID, "_OutComputeBuffer", _rtOutBuffer);
+            _computeShaderForTest.Dispatch(kernelID, Mathf.CeilToInt((float)_width / _gpuThreads.x), 
+                                                    Mathf.CeilToInt((float)_height / _gpuThreads.y), 1);
+            _rtOutBuffer.GetData(_rtOutBufferArray);
         }
 
         void InitializeForGPUMode()
@@ -105,13 +156,25 @@ namespace GPGPUExamples
             _vk.enableRandomWrite = true;
             _vk.Create();
 
-            _rk = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
-            _rk.enableRandomWrite = true;
-            _rk.Create();
+            _vk1 = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
+            _vk1.enableRandomWrite = true;
+            _vk1.Create();
 
-            _pk = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
-            _pk.enableRandomWrite = true;
-            _pk.Create();
+            _rka = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
+            _rka.enableRandomWrite = true;
+            _rka.Create();
+
+            _rkb = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
+            _rkb.enableRandomWrite = true;
+            _rkb.Create();
+
+            _pka = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
+            _pka.enableRandomWrite = true;
+            _pka.Create();
+
+            _pkb = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
+            _pkb.enableRandomWrite = true;
+            _pkb.Create();
 
             _Lp = new RenderTexture(_width, _height, 0, RenderTextureFormat.RFloat);
             _Lp.enableRandomWrite = true;
@@ -121,41 +184,37 @@ namespace GPGPUExamples
             _Lv.enableRandomWrite = true;
             _Lv.Create();
 
+            _rtOutBufferArray = new float[_width*_height];
+            _rtOutBuffer = new ComputeBuffer(_width*_height, sizeof(float));
+
             _initialized = true;
         }
 
-        void SolvePoissonGPU(int width, int height, float h)
+        void SolvePoissonGPU(int width, int height, float delta)
         {
             if (!_initialized)
             {
                 InitializeForGPUMode();
             }
 
-            // //***********************************************
-            // int kernelID = _computeShader.FindKernel("CsSetInitialData");
-            // _computeShader.SetInt("_width", width);
-            // _computeShader.SetInt("_height", height);
-            // _computeShader.SetTexture(kernelID, "_VectorA", _Lp);
-            // _computeShader.SetTexture(kernelID, "_VectorB", _Lv);
-            // _computeShader.Dispatch(kernelID, Mathf.CeilToInt((float)width / _gpuThreads.x), 
-            //                                     Mathf.CeilToInt((float)height / _gpuThreads.y), 1);
+            // r0 = b - L*v0
+            CsLpMV(_Lv, _vk, width, height, delta);
+            CsSzaxpy(_rka, -1.0f, _Lv, _b, width, height);
+            CsCopyVector(_rkb, _rka, width, height);
 
-            // float dot = CsDotProduct(_Lp, _Lv, width, height);
-            // Debug.Log("Dot: " + dot);
-            // //***********************************************
+            // p0 = r0
+            CsCopyVector(_pka, _rka, width, height);
 
-            CsSetInitialData(_vk, _b, width, height);
-            CsLpMV(_Lv, _vk, width, height, h);
-            CsSzaxpy(_rk, -1.0f, _Lv, _b, width, height);
-            CsCopyVector(_pk, _rk, width, height);
+            // (r0, r0)
+            float rk1rk1 = CsDotProduct(_rka, _rkb, width, height);
 
             // Iteration
             for (int iter = 0; iter < _maxIter; iter++)
             {
-                float rkrk = CsDotProduct(_rk, _rk, width, height);
+                float rkrk = rk1rk1;
 
                 // Convergence check
-                if (rkrk < Mathf.Epsilon)
+                if (rkrk < _eps)
                 {
                     Debug.Log("Converged");
                     Debug.Log("Iter: " + iter);
@@ -163,26 +222,29 @@ namespace GPGPUExamples
                     break;
                 }
 
-                CsLpMV(_Lp, _pk, width, height, h);
-                float pLp = CsDotProduct(_pk, _Lp, width, height);
+                // (pk, L*pk)
+                CsLpMV(_Lp, _pka, width, height, delta);
+                float pLp = CsDotProduct(_pka, _Lp, width, height);
+
+                // alpha = (rk,rk)/(pk,L*pk)
                 float alpha = rkrk/pLp;
 
-                CsSzaxpy(_rk, -alpha, _Lp, _rk, width, height);
+                // vk1 = vk + alpha*pk
+                CsSzaxpy(_vk1,  alpha, _pka, _vk, width, height);
+                CsCopyVector(_vk, _vk1, width, height);
+                
+                // rk1 = rk - alpha*L*pk
+                CsSzaxpy(_rkb, -alpha, _Lp, _rka, width, height);
+                CsCopyVector(_rka, _rkb, width, height);
 
-                float beta = CsDotProduct(_rk, _rk, width, height)/rkrk;
-                CsSzaxpy(_pk, beta, _pk, _rk, width, height);
+                // beta = (rk1,rk1)/(rk,rk)
+                rk1rk1 = CsDotProduct(_rka, _rkb, width, height);
+                float beta = rk1rk1/rkrk;
+
+                // pk1 = rk1 + beta*pk
+                CsSzaxpy(_pkb, beta, _pka, _rka, width, height);
+                CsCopyVector(_pka, _pkb, width, height);
             }
-        }
-
-        void CsSetInitialData(RenderTexture v0, RenderTexture b, int width, int height)
-        {
-            int kernelID = _computeShader.FindKernel("CsSetInitialData");
-            _computeShader.SetInt("_width", width);
-            _computeShader.SetInt("_height", height);
-            _computeShader.SetTexture(kernelID, "_vk", v0); // Initial guess
-            _computeShader.SetTexture(kernelID, "_b", b); // Source term
-            _computeShader.Dispatch(kernelID, Mathf.CeilToInt((float)width / _gpuThreads.x), 
-                                                Mathf.CeilToInt((float)height / _gpuThreads.y), 1);
         }
 
         void CsCopyVector(RenderTexture dst, RenderTexture src, int width, int height)
@@ -190,19 +252,19 @@ namespace GPGPUExamples
             int kernelID = _computeShader.FindKernel("CsCopyVector");
             _computeShader.SetInt("_width", width);
             _computeShader.SetInt("_height", height);
-            _computeShader.SetTexture(kernelID, "_y", src);
-            _computeShader.SetTexture(kernelID, "_x", dst);
+            _computeShader.SetTexture(kernelID, "_x", src);
+            _computeShader.SetTexture(kernelID, "_y", dst);
             _computeShader.Dispatch(kernelID, Mathf.CeilToInt((float)width / _gpuThreads.x), 
                                                 Mathf.CeilToInt((float)height / _gpuThreads.y), 1);
         }
 
         void CsLpMV(RenderTexture Lv, RenderTexture vk, int width, int height, float h)
         {
-            int kernelID = _computeShader.FindKernel("CsLpMV1");
+            int kernelID = _computeShader.FindKernel("CsLpMV");
             _computeShader.SetInt("_width", width);
             _computeShader.SetInt("_height", height);
             _computeShader.SetFloat("_h", h);
-            _computeShader.SetTexture(kernelID, "_vk", vk);
+            _computeShader.SetTexture(kernelID, "_v", vk);
             _computeShader.SetTexture(kernelID, "_Lv", Lv);
             _computeShader.Dispatch(kernelID, Mathf.CeilToInt((float)width / _gpuThreads.x), 
                                                 Mathf.CeilToInt((float)height / _gpuThreads.y), 1);
@@ -227,8 +289,8 @@ namespace GPGPUExamples
             _computeShader.SetInt("_width", width);
             _computeShader.SetInt("_height", height);
             _computeShader.SetInt("_numOfGroupsX", _numOfGroupsX);
-            _computeShader.SetTexture(kernelID, "_VectorA", vectorA);
-            _computeShader.SetTexture(kernelID, "_VectorB", vectorB);
+            _computeShader.SetTexture(kernelID, "_a", vectorA);
+            _computeShader.SetTexture(kernelID, "_b", vectorB);
             _computeShader.SetBuffer(kernelID, "_PartialDot", _partialDotBuffer);
 
             // The total number of execution threads is numOfGroups*numOfGpuThreads

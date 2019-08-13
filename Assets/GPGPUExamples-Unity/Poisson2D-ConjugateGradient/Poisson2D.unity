@@ -142,9 +142,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _computeShader: {fileID: 7200000, guid: 23ee0ec47e16fa4469883e83ecc4c1e4, type: 3}
-  _width: 500
-  _height: 500
-  _maxIter: 50
+  _computeShaderForTest: {fileID: 7200000, guid: 7556f47f1e2a6794f8c18c53dedcdf2f,
+    type: 3}
+  _debugTextureMaterial: {fileID: 2100000, guid: 539ee4609234e06488afa99bb3abb9cc,
+    type: 2}
+  _width: 100
+  _height: 100
+  _delta: 0.1
+  _maxIter: 500
+  _eps: 0.0000001
 --- !u!4 &568171404
 Transform:
   m_ObjectHideFlags: 0
@@ -235,7 +241,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 699560510}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 0, z: -2}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}

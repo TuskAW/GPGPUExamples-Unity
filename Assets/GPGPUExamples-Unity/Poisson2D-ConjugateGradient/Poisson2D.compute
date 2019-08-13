@@ -6,26 +6,25 @@
 #define THREADS_X 16
 #define THREADS_Y 16
 
-RWTexture2D<float> _b;
-RWTexture2D<float> _vk;
+RWTexture2D<float> _v;
 RWTexture2D<float> _Lv;
 
 RWTexture2D<float> _x;
 RWTexture2D<float> _y;
 RWTexture2D<float> _z;
 
-RWTexture2D<float> _VectorA;
-RWTexture2D<float> _VectorB;
+RWTexture2D<float> _a;
+RWTexture2D<float> _b;
 RWStructuredBuffer<float> _PartialDot;
 groupshared float groupsum[THREADS_X*THREADS_Y];
 
 cbuffer params
 {
+    float _h;
     int _width;
     int _height;
-    int _numOfGroupsX;
-    int _h;
     float _alpha;
+    int _numOfGroupsX;
 };
 
 [numthreads(THREADS_X, THREADS_Y, 1)]
@@ -49,12 +48,12 @@ void CsLpMV(uint2 i : SV_DispatchThreadID)
         uint2 ym1 = uint2(i.x, i.y - 1);
 
         // Finite Difference for 2D
-        _Lv[i] = (_vk[xm1] + _vk[ym1] - 4.0*_vk[i] + _vk[xp1] + _vk[yp1])/(_h*_h);
+        _Lv[i] = (_v[xm1] + _v[ym1] - 4.0*_v[i] + _v[xp1] + _v[yp1])/(_h*_h);
     }
 }
 
 //============================================
-// z = a*x + y
+// Single precision calculation of z = a*x + y
 //============================================
 [numthreads(THREADS_X, THREADS_Y, 1)]
 void CsSzaxpy(uint2 i : SV_DispatchThreadID)
@@ -66,7 +65,7 @@ void CsSzaxpy(uint2 i : SV_DispatchThreadID)
 void CsDotProduct(uint2 id : SV_DispatchThreadID, uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID)
 {
     // Each thread loads one element from global to shared mem
-    groupsum[gtid.x + THREADS_X*gtid.y] = _VectorA[id]*_VectorB[id];
+    groupsum[gtid.x + THREADS_X*gtid.y] = _a[id]*_b[id];
     GroupMemoryBarrierWithGroupSync();
 
     // Do reduction in shared mem
